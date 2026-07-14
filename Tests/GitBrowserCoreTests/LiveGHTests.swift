@@ -39,6 +39,22 @@ final class LiveGHTests: XCTestCase {
         print("LIVE: gh repo read-file/read-dir supported: \(supported)")
     }
 
+    func testMetadataExtrasAgainstRealRepo() async throws {
+        let client = try liveClient()
+        let coords = RepoCoordinates(host: "github.com", owner: "octocat", repo: "Hello-World")
+        let sha = try await client.resolveCommit(for: coords, ref: nil)
+
+        let tree = try await client.fullTree(for: coords, commit: sha)
+        XCTAssertTrue(tree.entries.contains { $0.path == "README" })
+
+        let branches = try await client.listBranches(for: coords)
+        XCTAssertTrue(branches.contains("master"), "branches: \(branches)")
+
+        let history = try await client.fileHistory(for: coords, ref: sha, path: "README")
+        XCTAssertFalse(history.isEmpty)
+        XCTAssertEqual(history[0].sha.count, 40)
+    }
+
     func testMissingFileMapsToNotFound() async throws {
         let client = try liveClient()
         let coords = RepoCoordinates(host: "github.com", owner: "octocat", repo: "Hello-World")

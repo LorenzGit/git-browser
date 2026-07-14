@@ -32,6 +32,20 @@ assets opens just as fast as a tiny one when all you want is one HTML page.
   anchors, query strings, Back, Forward, and Reload all work.
 - **Refresh** re-resolves the branch to its latest commit and clears all
   in-memory session data.
+- **Go to File (⌘P)** — fuzzy-find any file from the repo's path listing
+  (one metadata-only API call, fetched lazily; still no content downloads).
+- **Search Code (⇧⌘F)** — GitHub's server-side code search scoped to the
+  repo; results open directly (default branch only, an API limitation).
+- **Branch/tag switcher** in the toolbar re-pins the session to any ref.
+- **File history** (right-click → History…, or ⌘Y) — pick any commit that
+  touched a file and view the file at that commit in a new tab.
+- **Pull request preview** — paste a PR URL (`…/pull/123`): the session pins
+  to the PR's head commit and the sidebar gains a changed-files list, so you
+  can render a PR's HTML/docs output without checking anything out.
+- README auto-opens on repo open (and on folder click when present), native
+  tabs (⌘T, right-click → Open in New Tab), Find in page (⌘F), recent repos
+  (File → Open Recent), Copy GitHub Link / Open on GitHub context actions,
+  and syntax-highlighted code fences in Markdown.
 
 ## Install
 

@@ -52,6 +52,96 @@ public struct DirEntry: Hashable, Sendable {
     }
 }
 
+/// One entry of a full (recursive) repository tree — metadata only, used by
+/// the fuzzy file finder. No file content is ever fetched for this.
+public struct TreeEntry: Hashable, Sendable {
+    public var path: String
+    public var type: DirEntryType
+    public var size: Int64
+
+    public init(path: String, type: DirEntryType, size: Int64) {
+        self.path = path
+        self.type = type
+        self.size = size
+    }
+}
+
+public struct FullTree: Sendable {
+    public var entries: [TreeEntry]
+    /// True when GitHub truncated the listing (extremely large repos).
+    public var truncated: Bool
+
+    public init(entries: [TreeEntry], truncated: Bool) {
+        self.entries = entries
+        self.truncated = truncated
+    }
+}
+
+public struct CommitInfo: Hashable, Sendable {
+    public var sha: String
+    /// First line of the commit message.
+    public var summary: String
+    public var authorName: String
+    /// ISO-8601 date string as returned by the API.
+    public var date: String
+
+    public init(sha: String, summary: String, authorName: String, date: String) {
+        self.sha = sha
+        self.summary = summary
+        self.authorName = authorName
+        self.date = date
+    }
+}
+
+public struct CodeSearchResult: Sendable {
+    public var path: String
+    /// Matching text fragments (may be empty).
+    public var fragments: [String]
+
+    public init(path: String, fragments: [String]) {
+        self.path = path
+        self.fragments = fragments
+    }
+}
+
+public struct PullRequestInfo: Sendable {
+    public var number: Int
+    public var title: String
+    public var state: String
+    public var author: String
+    public var headSHA: String
+    public var headRef: String
+    public var baseRef: String
+
+    public init(number: Int, title: String, state: String, author: String,
+                headSHA: String, headRef: String, baseRef: String) {
+        self.number = number
+        self.title = title
+        self.state = state
+        self.author = author
+        self.headSHA = headSHA
+        self.headRef = headRef
+        self.baseRef = baseRef
+    }
+}
+
+public struct PullRequestFile: Sendable {
+    /// added | modified | removed | renamed | copied | changed | unchanged
+    public var status: String
+    public var path: String
+    public var previousPath: String?
+    public var additions: Int
+    public var deletions: Int
+
+    public init(status: String, path: String, previousPath: String?, additions: Int, deletions: Int) {
+        self.status = status
+        self.path = path
+        self.previousPath = previousPath
+        self.additions = additions
+        self.deletions = deletions
+    }
+}
+
 public enum GitHubClientError: Error, LocalizedError {
     case ghNotFound
     case notAuthenticated

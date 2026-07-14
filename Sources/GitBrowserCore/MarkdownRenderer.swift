@@ -51,8 +51,14 @@ public enum MarkdownRenderer {
                     i += 1
                 }
                 i += 1 // closing fence
+                let source = code.joined(separator: "\n")
                 let classAttr = language.isEmpty ? "" : " class=\"language-\(HTMLEscape.escape(language))\""
-                html += "<pre><code\(classAttr)>\(HTMLEscape.escape(code.joined(separator: "\n")))</code></pre>\n"
+                // Reuse the code-preview highlighter inside fences; unknown
+                // languages fall through to plain escaping.
+                let body = CodeHighlighter.highlightHTML(
+                    source: source, fileExtension: Self.fileExtension(forFenceLanguage: language)
+                )
+                html += "<pre><code\(classAttr)>\(body)</code></pre>\n"
                 continue
             }
 
@@ -226,6 +232,26 @@ public enum MarkdownRenderer {
         return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
+    /// Maps a fence language tag ("swift", "python", "js"…) onto the file
+    /// extension the CodeHighlighter keys on.
+    static func fileExtension(forFenceLanguage language: String) -> String {
+        switch language.lowercased() {
+        case "javascript", "node": return "js"
+        case "typescript": return "ts"
+        case "python", "python3": return "py"
+        case "rust": return "rs"
+        case "ruby": return "rb"
+        case "shell", "console", "terminal", "shellscript": return "sh"
+        case "objective-c", "objc": return "m"
+        case "c++": return "cpp"
+        case "kotlin": return "kt"
+        case "csharp", "c#": return "cs"
+        case "yaml": return "yml"
+        case "makefile": return "make"
+        default: return language.lowercased()
+        }
+    }
+
     public static func slugify(_ text: String) -> String {
         let lowered = text.lowercased()
         var slug = ""
@@ -356,6 +382,10 @@ public enum MarkdownRenderer {
     .markdown-body th { background: #f6f8fa; }
     .markdown-body img { max-width: 100%; }
     .markdown-body hr { border: none; border-top: 3px solid #d1d9e0; margin: 24px 0; }
+    .markdown-body .kw { color: #cf222e; }
+    .markdown-body .str { color: #0a3069; }
+    .markdown-body .com { color: #6e7781; font-style: italic; }
+    .markdown-body .num { color: #0550ae; }
     @media (prefers-color-scheme: dark) {
       body { background: #0d1117; }
       .markdown-body { color: #f0f6fc; }
@@ -365,6 +395,10 @@ public enum MarkdownRenderer {
       .markdown-body blockquote { color: #9198a1; border-color: #3d444d; }
       .markdown-body th, .markdown-body td { border-color: #3d444d; }
       .markdown-body th { background: #161b22; }
+      .markdown-body .kw { color: #ff7b72; }
+      .markdown-body .str { color: #a5d6ff; }
+      .markdown-body .com { color: #8b949e; }
+      .markdown-body .num { color: #79c0ff; }
     }
     """
 }

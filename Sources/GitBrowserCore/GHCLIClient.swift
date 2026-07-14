@@ -206,6 +206,66 @@ public final class GHCLIClient: GitHubClient, @unchecked Sendable {
         ))
     }
 
+    // MARK: - Metadata extras
+
+    public func fullTree(for repo: RepoCoordinates, commit: String) async throws -> FullTree {
+        let data = try await runGH(apiArguments(
+            repo, endpoint: "repos/\(repo.owner)/\(repo.repo)/git/trees/\(commit)?recursive=1"
+        ))
+        return try Self.parseTreeJSON(data)
+    }
+
+    public func listBranches(for repo: RepoCoordinates) async throws -> [String] {
+        let data = try await runGH(apiArguments(
+            repo, endpoint: "repos/\(repo.owner)/\(repo.repo)/branches?per_page=100",
+            extra: ["--jq", "[.[].name]"]
+        ))
+        return try Self.parseStringArray(data, what: "branch list")
+    }
+
+    public func listTags(for repo: RepoCoordinates) async throws -> [String] {
+        let data = try await runGH(apiArguments(
+            repo, endpoint: "repos/\(repo.owner)/\(repo.repo)/tags?per_page=100",
+            extra: ["--jq", "[.[].name]"]
+        ))
+        return try Self.parseStringArray(data, what: "tag list")
+    }
+
+    public func searchCode(for repo: RepoCoordinates, query: String) async throws -> [CodeSearchResult] {
+        let raw = "\(query) repo:\(repo.owner)/\(repo.repo)"
+        let encoded = raw.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? raw
+        let data = try await runGH(apiArguments(
+            repo, endpoint: "search/code?q=\(encoded)&per_page=30",
+            extra: ["-H", "Accept: application/vnd.github.text-match+json"]
+        ))
+        return try Self.parseSearchJSON(data)
+    }
+
+    public func fileHistory(for repo: RepoCoordinates, ref: String, path: String) async throws -> [CommitInfo] {
+        let encodedPath = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? path
+        let data = try await runGH(apiArguments(
+            repo,
+            endpoint: "repos/\(repo.owner)/\(repo.repo)/commits?path=\(encodedPath)&sha=\(ref)&per_page=50"
+        ))
+        return try Self.parseCommitsJSON(data)
+    }
+
+    public func pullRequest(for repo: RepoCoordinates, number: Int) async throws -> PullRequestInfo {
+        let data = try await runGH(apiArguments(
+            repo, endpoint: "repos/\(repo.owner)/\(repo.repo)/pulls/\(number)"
+        ))
+        return try Self.parsePullRequestJSON(data)
+    }
+
+    public func pullRequestFiles(for repo: RepoCoordinates, number: Int) async throws -> [PullRequestFile] {
+        // --paginate --slurp wraps the pages in one outer JSON array.
+        let data = try await runGH(apiArguments(
+            repo, endpoint: "repos/\(repo.owner)/\(repo.repo)/pulls/\(number)/files?per_page=100",
+            extra: ["--paginate", "--slurp"]
+        ))
+        return try Self.parsePullRequestFilesJSON(data)
+    }
+
     // MARK: - Parsing
 
     static func parseReadDirJSON(_ data: Data) throws -> [DirEntry] {
@@ -224,6 +284,106 @@ public final class GHCLIClient: GitHubClient, @unchecked Sendable {
             throw GitHubClientError.invalidResponse("directory listing")
         }
         return entries.compactMap(Self.entry(fromJSON:))
+    }
+
+    static func parseTreeJSON(_ data: Data) throws -> FullTree {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let tree = object["tree"] as? [[String: Any]]
+        else {
+            throw GitHubClientError.invalidResponse("git tree")
+        }
+        let entries: [TreeEntry] = tree.compactMap { item in
+            guard let path = item["path"] as? String, let type = item["type"] as? String else {
+                return nil
+            }
+            let entryType: DirEntryType = type == "tree" ? .dir : (type == "blob" ? .file : .other)
+            let size = (item["size"] as? NSNumber)?.int64Value ?? 0
+            return TreeEntry(path: path, type: entryType, size: size)
+        }
+        return FullTree(entries: entries, truncated: object["truncated"] as? Bool ?? false)
+    }
+
+    static func parseStringArray(_ data: Data, what: String) throws -> [String] {
+        guard let names = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+            throw GitHubClientError.invalidResponse(what)
+        }
+        return names
+    }
+
+    static func parseSearchJSON(_ data: Data) throws -> [CodeSearchResult] {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let items = object["items"] as? [[String: Any]]
+        else {
+            throw GitHubClientError.invalidResponse("code search results")
+        }
+        return items.compactMap { item in
+            guard let path = item["path"] as? String else { return nil }
+            let matches = item["text_matches"] as? [[String: Any]] ?? []
+            let fragments = matches.compactMap { $0["fragment"] as? String }
+            return CodeSearchResult(path: path, fragments: fragments)
+        }
+    }
+
+    static func parseCommitsJSON(_ data: Data) throws -> [CommitInfo] {
+        guard let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw GitHubClientError.invalidResponse("commit list")
+        }
+        return items.compactMap { item in
+            guard let sha = item["sha"] as? String,
+                  let commit = item["commit"] as? [String: Any]
+            else { return nil }
+            let message = commit["message"] as? String ?? ""
+            let author = commit["author"] as? [String: Any]
+            return CommitInfo(
+                sha: sha,
+                summary: String(message.split(separator: "\n").first ?? ""),
+                authorName: author?["name"] as? String ?? "",
+                date: author?["date"] as? String ?? ""
+            )
+        }
+    }
+
+    static func parsePullRequestJSON(_ data: Data) throws -> PullRequestInfo {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let number = (object["number"] as? NSNumber)?.intValue,
+            let head = object["head"] as? [String: Any],
+            let headSHA = head["sha"] as? String
+        else {
+            throw GitHubClientError.invalidResponse("pull request")
+        }
+        let base = object["base"] as? [String: Any]
+        let user = object["user"] as? [String: Any]
+        return PullRequestInfo(
+            number: number,
+            title: object["title"] as? String ?? "PR #\(number)",
+            state: object["state"] as? String ?? "",
+            author: user?["login"] as? String ?? "",
+            headSHA: headSHA,
+            headRef: head["ref"] as? String ?? "",
+            baseRef: base?["ref"] as? String ?? ""
+        )
+    }
+
+    static func parsePullRequestFilesJSON(_ data: Data) throws -> [PullRequestFile] {
+        // Input is --slurp output: an array of pages, each an array of files.
+        guard let pages = try? JSONSerialization.jsonObject(with: data) as? [[[String: Any]]] else {
+            throw GitHubClientError.invalidResponse("pull request files")
+        }
+        return pages.flatMap { page in
+            page.compactMap { item -> PullRequestFile? in
+                guard let path = item["filename"] as? String else { return nil }
+                return PullRequestFile(
+                    status: item["status"] as? String ?? "modified",
+                    path: path,
+                    previousPath: item["previous_filename"] as? String,
+                    additions: (item["additions"] as? NSNumber)?.intValue ?? 0,
+                    deletions: (item["deletions"] as? NSNumber)?.intValue ?? 0
+                )
+            }
+        }
     }
 
     private static func entry(fromJSON json: [String: Any]) -> DirEntry? {

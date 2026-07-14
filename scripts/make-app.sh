@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.2.0}"
 
 if [ -d "/Applications/Xcode.app" ] && [ "$(xcode-select -p)" = "/Library/Developer/CommandLineTools" ]; then
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer

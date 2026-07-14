@@ -45,8 +45,122 @@ final class WebPreviewController: NSViewController, WKNavigationDelegate, WKUIDe
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        view = webView
-        view.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        ])
+        buildFindBar(in: container)
+        view = container
+    }
+
+    // MARK: - Find in page (⌘F)
+
+    private let findBar = NSVisualEffectView()
+    private let findField = NSSearchField()
+    private let findStatus = NSTextField(labelWithString: "")
+
+    private func buildFindBar(in container: NSView) {
+        findBar.material = .headerView
+        findBar.blendingMode = .withinWindow
+        findBar.wantsLayer = true
+        findBar.layer?.cornerRadius = 8
+        findBar.layer?.borderWidth = 1
+        findBar.layer?.borderColor = NSColor.separatorColor.cgColor
+        findBar.isHidden = true
+        findBar.translatesAutoresizingMaskIntoConstraints = false
+
+        findField.placeholderString = "Find in page"
+        findField.target = self
+        findField.action = #selector(findFieldChanged(_:))
+        findField.sendsSearchStringImmediately = true
+        findField.translatesAutoresizingMaskIntoConstraints = false
+
+        findStatus.textColor = .secondaryLabelColor
+        findStatus.font = .systemFont(ofSize: 11)
+        findStatus.translatesAutoresizingMaskIntoConstraints = false
+
+        let previous = NSButton(
+            image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "Previous match")!,
+            target: self, action: #selector(findPrevious(_:))
+        )
+        let next = NSButton(
+            image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Next match")!,
+            target: self, action: #selector(findNext(_:))
+        )
+        let done = NSButton(title: "Done", target: self, action: #selector(hideFindBar(_:)))
+        for button in [previous, next, done] {
+            button.bezelStyle = .accessoryBarAction
+            button.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        for subview in [findField, findStatus, previous, next, done] {
+            findBar.addSubview(subview)
+        }
+        container.addSubview(findBar)
+
+        NSLayoutConstraint.activate([
+            findBar.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            findBar.heightAnchor.constraint(equalToConstant: 36),
+
+            findField.leadingAnchor.constraint(equalTo: findBar.leadingAnchor, constant: 8),
+            findField.centerYAnchor.constraint(equalTo: findBar.centerYAnchor),
+            findField.widthAnchor.constraint(equalToConstant: 200),
+
+            findStatus.leadingAnchor.constraint(equalTo: findField.trailingAnchor, constant: 8),
+            findStatus.centerYAnchor.constraint(equalTo: findBar.centerYAnchor),
+
+            previous.leadingAnchor.constraint(equalTo: findStatus.trailingAnchor, constant: 8),
+            previous.centerYAnchor.constraint(equalTo: findBar.centerYAnchor),
+            next.leadingAnchor.constraint(equalTo: previous.trailingAnchor, constant: 4),
+            next.centerYAnchor.constraint(equalTo: findBar.centerYAnchor),
+            done.leadingAnchor.constraint(equalTo: next.trailingAnchor, constant: 8),
+            done.trailingAnchor.constraint(equalTo: findBar.trailingAnchor, constant: -8),
+            done.centerYAnchor.constraint(equalTo: findBar.centerYAnchor),
+        ])
+    }
+
+    func showFindBar() {
+        findBar.isHidden = false
+        view.window?.makeFirstResponder(findField)
+        findField.selectText(nil)
+    }
+
+    @objc private func hideFindBar(_ sender: Any?) {
+        findBar.isHidden = true
+        findStatus.stringValue = ""
+        view.window?.makeFirstResponder(webView)
+    }
+
+    @objc private func findFieldChanged(_ sender: Any?) {
+        performFind(forward: true)
+    }
+
+    @objc func findNext(_ sender: Any?) { performFind(forward: true) }
+    @objc func findPrevious(_ sender: Any?) { performFind(forward: false) }
+
+    private func performFind(forward: Bool) {
+        let query = findField.stringValue
+        guard !query.isEmpty else {
+            findStatus.stringValue = ""
+            return
+        }
+        let configuration = WKFindConfiguration()
+        configuration.backwards = !forward
+        configuration.caseSensitive = false
+        configuration.wraps = true
+        webView.find(query, configuration: configuration) { [weak self] result in
+            self?.findStatus.stringValue = result.matchFound ? "" : "Not found"
+        }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        if !findBar.isHidden { hideFindBar(sender) }
     }
 
     // MARK: - Loading

@@ -7,11 +7,15 @@ public struct ParsedRepoURL: Equatable, Sendable {
     public var ref: String?
     /// Initial file or directory path named in the URL, if any (repo-root relative).
     public var initialPath: String?
+    /// Pull request number for …/pull/N URLs.
+    public var pullRequest: Int?
 
-    public init(coordinates: RepoCoordinates, ref: String? = nil, initialPath: String? = nil) {
+    public init(coordinates: RepoCoordinates, ref: String? = nil,
+                initialPath: String? = nil, pullRequest: Int? = nil) {
         self.coordinates = coordinates
         self.ref = ref
         self.initialPath = initialPath
+        self.pullRequest = pullRequest
     }
 }
 
@@ -91,6 +95,11 @@ public enum GitHubRepoURLParser {
 
         let marker = segments.removeFirst()
         switch marker {
+        case "pull":
+            guard let numberText = segments.first, let number = Int(numberText), number > 0 else {
+                return ParsedRepoURL(coordinates: coords)
+            }
+            return ParsedRepoURL(coordinates: coords, pullRequest: number)
         case "tree", "blob", "raw", "commits", "commit":
             guard !segments.isEmpty else {
                 return ParsedRepoURL(coordinates: coords)
