@@ -46,6 +46,14 @@ assets opens just as fast as a tiny one when all you want is one HTML page.
   tabs (⌘T, right-click → Open in New Tab), Find in page (⌘F), recent repos
   (File → Open Recent), Copy GitHub Link / Open on GitHub context actions,
   and syntax-highlighted code fences in Markdown.
+- **Local folders too** — the folder toolbar button (or File → Open Folder…,
+  ⇧⌘O, or typing/pasting a path like `~/projects/site`) browses any local
+  folder through the same previews and the same sandboxed `repobrowser://`
+  pipeline (WebKit never gets `file://` access). Live working tree by
+  default — edit a file, hit Reload, see the change. If the folder is a git
+  repository, the branch/tag switcher and per-file history work against
+  git itself, including viewing files at any past commit. Remote browsing
+  is unchanged; a local folder is never required.
 
 ## Install
 

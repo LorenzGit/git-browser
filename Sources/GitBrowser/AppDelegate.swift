@@ -123,6 +123,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fileMenu.addItem(withTitle: "New Tab", action: #selector(NSResponder.newWindowForTab(_:)), keyEquivalent: "t")
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Open Repository…", action: #selector(MainWindowController.focusURLField(_:)), keyEquivalent: "o")
+        let openFolderItem = NSMenuItem(title: "Open Folder…", action: #selector(MainWindowController.openFolderPanel(_:)), keyEquivalent: "o")
+        openFolderItem.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(openFolderItem)
         let openRecentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
         let openRecentMenu = NSMenu(title: "Open Recent")
         openRecentMenu.delegate = self

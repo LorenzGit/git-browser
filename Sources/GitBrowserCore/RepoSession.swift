@@ -23,6 +23,9 @@ public actor RepoSession {
     private var inflightFiles: [String: Task<Data, Error>] = [:]
     /// Bumped on refresh so stale in-flight tasks are not cached afterwards.
     private var generation = 0
+    /// False for mutable sources (a local working tree), where cached bytes
+    /// would go stale the moment the user edits a file.
+    private let cachesData: Bool
 
     public init(
         id: String,
@@ -31,7 +34,8 @@ public actor RepoSession {
         metadata: RepoMetadata,
         requestedRef: String?,
         commitSHA: String,
-        cacheLimitBytes: Int = 64 * 1024 * 1024
+        cacheLimitBytes: Int = 64 * 1024 * 1024,
+        cachesData: Bool = true
     ) {
         self.id = id
         self.client = client
@@ -40,6 +44,7 @@ public actor RepoSession {
         self.requestedRef = requestedRef
         self.commitSHA = commitSHA
         self.fileCache = LRUByteCache(maxTotalBytes: cacheLimitBytes)
+        self.cachesData = cachesData
     }
 
     /// Opens a repository: fetches metadata and resolves the requested ref to
@@ -47,7 +52,8 @@ public actor RepoSession {
     public static func open(
         client: GitHubClient,
         coordinates: RepoCoordinates,
-        ref: String?
+        ref: String?,
+        cachesData: Bool = true
     ) async throws -> RepoSession {
         let metadata = try await client.fetchMetadata(for: coordinates)
         let sha = try await client.resolveCommit(for: coordinates, ref: ref)
@@ -57,7 +63,8 @@ public actor RepoSession {
             coordinates: coordinates,
             metadata: metadata,
             requestedRef: ref,
-            commitSHA: sha
+            commitSHA: sha,
+            cachesData: cachesData
         )
     }
 
@@ -73,7 +80,7 @@ public actor RepoSession {
         guard let path = RepoPath.normalize(rawPath) else {
             throw GitHubClientError.notFound(rawPath)
         }
-        if let cached = directoryCache[path] { return cached }
+        if cachesData, let cached = directoryCache[path] { return cached }
         if let inflight = inflightDirectories[path] {
             return try await inflight.value
         }
@@ -88,7 +95,7 @@ public actor RepoSession {
         defer { inflightDirectories[path] = nil }
         do {
             let entries = try await task.value
-            if generation == gen {
+            if generation == gen, cachesData {
                 directoryCache[path] = entries
             }
             return entries
@@ -105,7 +112,7 @@ public actor RepoSession {
         guard let path = RepoPath.normalize(rawPath), !path.isEmpty else {
             throw GitHubClientError.notFound(rawPath)
         }
-        if let cached = fileCache.value(forKey: path) {
+        if cachesData, let cached = fileCache.value(forKey: path) {
             return cached
         }
         if let inflight = inflightFiles[path] {
@@ -121,7 +128,7 @@ public actor RepoSession {
         inflightFiles[path] = task
         defer { inflightFiles[path] = nil }
         let data = try await task.value
-        if generation == gen {
+        if generation == gen, cachesData {
             fileCache.setValue(data, forKey: path)
         }
         return data

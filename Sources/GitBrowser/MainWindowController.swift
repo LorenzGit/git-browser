@@ -6,8 +6,15 @@ import GitBrowserCore
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolbarItemValidation {
     private let registry = RepoSessionRegistry()
     private lazy var schemeHandler = RepoSchemeHandler(registry: registry)
-    private var client: GHCLIClient?
+    /// Cached gh-backed client (feature detection runs once).
+    private var ghClient: GHCLIClient?
+    /// Client behind the current session: gh-backed or local-folder.
+    private var activeClient: (any GitHubClient)?
     private var session: RepoSession?
+    /// Set when the current session browses a local folder.
+    private var localRootURL: URL?
+    /// Pinned ref for a local session (nil = live working tree).
+    private var localRef: String?
 
     private let sidebar = SidebarViewController()
     private lazy var preview = PreviewContainerViewController(schemeHandler: schemeHandler)
@@ -70,7 +77,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
             NSPasteboard.general.setString(link, forType: .string)
         }
         sidebar.onOpenOnGitHub = { [weak self] path, isDirectory in
-            guard let link = self?.githubWebURL(path: path, isDirectory: isDirectory),
+            guard let self else { return }
+            if let localRoot = self.localRootURL {
+                // Local sessions: reveal the file in Finder instead.
+                NSWorkspace.shared.activateFileViewerSelecting(
+                    [localRoot.appendingPathComponent(path)]
+                )
+                return
+            }
+            guard let link = self.githubWebURL(path: path, isDirectory: isDirectory),
                   let url = URL(string: link) else { return }
             NSWorkspace.shared.open(url)
         }
@@ -133,7 +148,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
         // traffic lights and the sidebar toggle join this zone too.
         let navWidth = navSegment.map { max($0.frame.width, 110) } ?? 120
         let branchWidth = branchPopup.map { min(max($0.frame.width, 80), 180) } ?? 100
-        var chrome = navWidth + branchWidth + 44 + 44 + 110
+        var chrome = navWidth + branchWidth + 44 + 44 + 44 + 120
         if sidebarCollapsed { chrome += 130 }
         urlFieldWidth.constant = max(240, window.frame.width - sidebarWidth - chrome)
     }
@@ -146,13 +161,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
         static let open = NSToolbarItem.Identifier("open")
         static let refresh = NSToolbarItem.Identifier("refresh")
         static let branch = NSToolbarItem.Identifier("branch")
+        static let folder = NSToolbarItem.Identifier("folder")
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .toggleSidebar, .sidebarTrackingSeparator,
             ItemID.nav, ItemID.refresh, ItemID.branch, ItemID.url,
-            ItemID.open,
+            ItemID.open, ItemID.folder,
         ]
     }
 
@@ -234,6 +250,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
             item.toolTip = "Switch branch or tag"
             return item
 
+        case ItemID.folder:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Open Folder")
+            item.label = "Open Folder"
+            item.toolTip = "Browse a local folder"
+            item.target = self
+            item.action = #selector(openFolderPanel(_:))
+            item.isBordered = true
+            return item
+
         case ItemID.refresh:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "Refresh")
@@ -280,6 +306,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
     /// history to open a file at an older commit).
     func openInNewTab(path: String, ref: String? = nil) {
         guard let session else { return }
+        if let localRoot = localRootURL {
+            makeTabbedController()?.openLocalFolder(
+                rootURL: localRoot, ref: ref ?? localRef, initialPath: path
+            )
+            return
+        }
         let coords = session.coordinates
         let effectiveRef = ref
             ?? currentPR?.headSHA
@@ -315,9 +347,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
     @objc func openRepository(_ sender: Any?) {
         let input = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return }
+        if let folderURL = localFolderURL(fromInput: input) {
+            openLocalFolder(rootURL: folderURL)
+            return
+        }
         guard let parsed = GitHubRepoURLParser.parse(input) else {
             presentError(title: "Unrecognized repository URL",
-                         message: "Enter something like https://github.com/owner/repo or owner/repo.")
+                         message: "Enter a GitHub URL (owner/repo) or a local folder path.")
             return
         }
         Task { await openRepo(parsed) }
@@ -342,10 +378,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
 
     private func openRepo(_ parsed: ParsedRepoURL) async {
         do {
-            if client == nil {
-                client = try GHCLIClient()
+            if ghClient == nil {
+                ghClient = try GHCLIClient()
             }
-            guard let client else { return }
+            guard let client = ghClient else { return }
 
             // A pull-request URL pins the session to the PR's head commit.
             var ref = parsed.ref
@@ -363,6 +399,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
             cachedFullTree = nil
             currentPR = pr
             lastViewedPath = nil
+            localRootURL = nil
+            localRef = nil
+            activeClient = client
 
             let newSession = try await RepoSession.open(
                 client: client, coordinates: parsed.coordinates, ref: ref
@@ -372,10 +411,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
 
             let sha = await newSession.commitSHA
             updateTitle(session: newSession, sha: sha)
-            sidebar.configure(sessionID: newSession.id)
+            sidebar.configure(sessionID: newSession.id, isLocal: false)
             await sidebar.reloadRoot()
             RecentRepos.add(urlField.stringValue)
-            populateBranchMenu(for: newSession)
+            let refTitle = currentPR.map { "PR #\($0.number)" }
+                ?? newSession.requestedRef ?? newSession.metadata.defaultBranch
+            populateBranchMenu(currentTitle: refTitle)
             NSLog("GitBrowser: opened %@ at %@ as %@",
                   newSession.coordinates.displayName, String(sha.prefix(12)), newSession.id)
 
@@ -404,6 +445,103 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
         } catch {
             presentError(title: "Could not open repository", message: error.localizedDescription)
         }
+    }
+
+    // MARK: - Local folders
+
+    /// Folder-picker toolbar button and File → Open Folder… (⇧⌘O).
+    @objc func openFolderPanel(_ sender: Any?) {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a folder to browse (git repositories get branches and history)"
+        panel.prompt = "Browse"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.openLocalFolder(rootURL: url)
+        }
+    }
+
+    /// Opens a local folder session. `ref` pins to a git branch/tag/commit
+    /// (nil = live working tree).
+    func openLocalFolder(rootURL: URL, ref: String? = nil, initialPath: String? = nil) {
+        Task { await openLocal(rootURL: rootURL, ref: ref, initialPath: initialPath) }
+    }
+
+    private func openLocal(rootURL: URL, ref: String?, initialPath: String?) async {
+        do {
+            let localClient = LocalFolderClient(rootURL: rootURL)
+
+            if let old = session {
+                registry.close(id: old.id)
+                session = nil
+            }
+            cachedFullTree = nil
+            currentPR = nil
+            lastViewedPath = nil
+            localRootURL = localClient.rootURL
+            localRef = ref
+            activeClient = localClient
+
+            // Working-tree sessions skip the byte cache so edits on disk show
+            // up on reload; ref-pinned sessions are immutable and cache.
+            let pinned = ref != nil && ref != LocalFolderClient.workingTreeRef
+            let coordinates = LocalFolderClient.coordinates(for: localClient.rootURL)
+            let newSession = try await RepoSession.open(
+                client: localClient, coordinates: coordinates, ref: ref, cachesData: pinned
+            )
+            registry.register(newSession)
+            session = newSession
+
+            let refTitle = ref ?? "Working Tree"
+            let folderName = localClient.rootURL.lastPathComponent
+            window?.title = "\(folderName) — \(refTitle)"
+            let displayPath = (localClient.rootURL.path as NSString).abbreviatingWithTildeInPath
+            urlField.stringValue = displayPath
+            urlField.toolTip = "\(localClient.rootURL.path) (\(refTitle))"
+                + (localClient.isGitRepository ? "" : " — not a git repository")
+
+            sidebar.configure(sessionID: newSession.id, isLocal: true)
+            await sidebar.reloadRoot()
+            RecentRepos.add(displayPath)
+            populateBranchMenu(currentTitle: refTitle)
+            NSLog("GitBrowser: opened local folder %@ (%@) as %@",
+                  localClient.rootURL.path, refTitle, newSession.id)
+
+            preview.showWelcome(repoName: folderName)
+            if let initialPath {
+                if initialPath.contains(".") {
+                    openPreview(path: initialPath, kind: PreviewRouter.kind(forPath: initialPath))
+                }
+                await sidebar.reveal(path: initialPath)
+            } else {
+                let root = (try? await newSession.directory(at: "")) ?? []
+                if let readme = Self.findReadme(in: root) {
+                    openPreview(path: readme, kind: PreviewRouter.kind(forPath: readme))
+                }
+            }
+        } catch {
+            presentError(title: "Could not open folder", message: error.localizedDescription)
+        }
+    }
+
+    /// Treats absolute, tilde, and file:// inputs in the URL field as local
+    /// folder paths.
+    private func localFolderURL(fromInput input: String) -> URL? {
+        var candidate: String?
+        if input.hasPrefix("file://"), let url = URL(string: input) {
+            candidate = url.path
+        } else if input.hasPrefix("/") || input.hasPrefix("~") {
+            candidate = (input as NSString).expandingTildeInPath
+        }
+        guard let candidate else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: candidate, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return nil }
+        return URL(fileURLWithPath: candidate)
     }
 
     /// Best README candidate among a directory's entries.
@@ -436,18 +574,21 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
 
     // MARK: - Branch switching
 
-    private func populateBranchMenu(for session: RepoSession) {
-        guard let popup = branchPopup, let client else { return }
-        let currentTitle = currentPR.map { "PR #\($0.number)" }
-            ?? session.requestedRef ?? session.metadata.defaultBranch
+    private func populateBranchMenu(currentTitle: String) {
+        guard let popup = branchPopup, let activeClient, let session else { return }
         popup.removeAllItems()
         popup.addItem(withTitle: currentTitle)
         popup.isEnabled = true
         updateURLFieldWidth()
 
+        let coordinates = session.coordinates
+        let isLocal = localRootURL != nil
         Task { [weak self] in
-            let branches = (try? await client.listBranches(for: session.coordinates)) ?? []
-            let tags = (try? await client.listTags(for: session.coordinates)) ?? []
+            var branches = (try? await activeClient.listBranches(for: coordinates)) ?? []
+            let tags = (try? await activeClient.listTags(for: coordinates)) ?? []
+            if isLocal, !branches.isEmpty || !tags.isEmpty {
+                branches.insert("Working Tree", at: 0)
+            }
             await MainActor.run {
                 self?.fillBranchMenu(currentTitle: currentTitle, branches: branches, tags: tags)
             }
@@ -483,6 +624,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
     @objc private func branchChosen(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String, let session else { return }
         branchPopup?.selectItem(at: 0)
+
+        if let localRoot = localRootURL {
+            let newRef = name == "Working Tree" ? nil : name
+            guard newRef != localRef else { return }
+            openLocalFolder(rootURL: localRoot, ref: newRef, initialPath: lastViewedPath)
+            return
+        }
+
         guard name != (session.requestedRef ?? session.metadata.defaultBranch) || currentPR != nil else {
             return
         }
@@ -497,7 +646,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
     // MARK: - Palettes (Go to File, Search Code, History)
 
     @objc func goToFile(_ sender: Any?) {
-        guard let window, let session, let client else { return }
+        guard let window, let session, let client = activeClient else { return }
         let coordinates = session.coordinates
         PaletteController.present(
             on: window,
@@ -525,7 +674,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
     }
 
     @objc func searchCodeAction(_ sender: Any?) {
-        guard let window, let session, let client else { return }
+        guard let window, let session, let client = activeClient else { return }
         let coordinates = session.coordinates
         PaletteController.present(
             on: window,
@@ -558,7 +707,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
     /// Commit history for one path; choosing a commit opens the file at that
     /// commit in a new tab (a fresh session pinned to that SHA).
     func showHistory(forPath path: String) {
-        guard let window, let session, let client else { return }
+        guard let window, let session, let client = activeClient else { return }
         let coordinates = session.coordinates
         let requestedRef = session.requestedRef
         PaletteController.present(
@@ -594,8 +743,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
     @objc func findNextInPage(_ sender: Any?) { preview.web.findNext(sender) }
     @objc func findPreviousInPage(_ sender: Any?) { preview.web.findPrevious(sender) }
 
-    /// Canonical github.com (or GHE) web URL for a repo path at the current ref.
+    /// Canonical github.com (or GHE) web URL for a repo path at the current
+    /// ref; a file:// URL for local sessions.
     private func githubWebURL(path: String, isDirectory: Bool) -> String? {
+        if let localRoot = localRootURL {
+            return localRoot.appendingPathComponent(path).absoluteString
+        }
         guard let session else { return nil }
         let coords = session.coordinates
         let ref = currentPR?.headSHA ?? session.requestedRef ?? session.metadata.defaultBranch

@@ -41,6 +41,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var prNodes: [TreeNode] = []
     private var mode: Mode = .tree
     private var sessionID: String?
+    /// Adjusts context-menu wording for local folder sessions.
+    private var isLocalSession = false
     /// True while reveal() adjusts the selection to mirror the preview, so
     /// the resulting selection change doesn't re-open the file.
     private var suppressSelectionCallback = false
@@ -90,8 +92,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         view = stack
     }
 
-    func configure(sessionID: String) {
+    func configure(sessionID: String, isLocal: Bool) {
         self.sessionID = sessionID
+        isLocalSession = isLocal
         rootNodes = []
         prNodes = []
         mode = .tree
@@ -323,9 +326,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add("History…", #selector(showHistoryAction(_:)))
         }
         menu.addItem(.separator())
-        add("Copy GitHub Link", #selector(copyLinkAction(_:)))
+        add(isLocalSession ? "Copy File URL" : "Copy GitHub Link", #selector(copyLinkAction(_:)))
         add("Copy Path", #selector(copyPathAction(_:)))
-        add("Open on GitHub", #selector(openOnGitHubAction(_:)))
+        add(isLocalSession ? "Reveal in Finder" : "Open on GitHub", #selector(openOnGitHubAction(_:)))
     }
 
     private func contextNode(_ sender: NSMenuItem) -> TreeNode? {
