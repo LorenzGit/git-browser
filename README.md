@@ -116,3 +116,7 @@ See [docs/web-compat.md](docs/web-compat.md) — most notably, `<video>` and
 bypasses custom scheme handlers; media files open in the dedicated AVKit
 preview instead. Service workers and secure-origin-only APIs are out of
 scope for the first release by design.
+
+## License
+
+[MIT](LICENSE)
