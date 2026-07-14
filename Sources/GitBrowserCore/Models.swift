@@ -1,7 +1,7 @@
 import Foundation
 
 /// Identifies a repository on a GitHub host (github.com or GitHub Enterprise).
-public struct RepoCoordinates: Hashable, Sendable {
+public struct RepoCoordinates: Hashable, Sendable, Codable {
     public var host: String
     public var owner: String
     public var repo: String

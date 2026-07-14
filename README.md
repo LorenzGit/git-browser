@@ -46,6 +46,12 @@ assets opens just as fast as a tiny one when all you want is one HTML page.
   tabs (⌘T, right-click → Open in New Tab), Find in page (⌘F), recent repos
   (File → Open Recent), Copy GitHub Link / Open on GitHub context actions,
   and syntax-highlighted code fences in Markdown.
+- **Bookmarks** — ⌘D bookmarks the current view (repository or local
+  folder, branch, and file); the Bookmarks menu opens them and Edit
+  Bookmarks… renames, retargets, or removes them. A bookmark remembers its
+  branch: if that branch is deleted — or the file no longer exists on it —
+  the bookmark falls back to the default branch (and tells you). Bookmarks
+  store only metadata (name, repo, ref, path), never content.
 - **Local folders too** — the folder toolbar button (or File → Open Folder…,
   ⇧⌘O, or typing/pasting a path like `~/projects/site`) browses any local
   folder through the same previews and the same sandboxed `repobrowser://`

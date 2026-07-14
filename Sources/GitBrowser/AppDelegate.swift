@@ -58,8 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Open Recent
 
-    /// Rebuilds the Open Recent submenu each time it is shown.
+    /// Rebuilds the dynamic submenus (Open Recent, Bookmarks) on display.
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu.title == "Bookmarks" {
+            updateBookmarksMenu(menu)
+            return
+        }
         guard menu.title == "Open Recent" else { return }
         menu.removeAllItems()
         let recents = RecentRepos.all()
@@ -94,6 +98,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func clearRecents(_ sender: Any?) {
         RecentRepos.clear()
+    }
+
+    // MARK: - Bookmarks menu
+
+    private func updateBookmarksMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.addItem(withTitle: "Add Bookmark…",
+                     action: #selector(MainWindowController.addBookmark(_:)),
+                     keyEquivalent: "d")
+        let edit = NSMenuItem(title: "Edit Bookmarks…", action: #selector(showBookmarkManager(_:)), keyEquivalent: "")
+        edit.target = self
+        menu.addItem(edit)
+
+        let bookmarks = BookmarkStore.shared.all()
+        guard !bookmarks.isEmpty else { return }
+        menu.addItem(.separator())
+        for bookmark in bookmarks {
+            let item = NSMenuItem(title: bookmark.name, action: #selector(openBookmarkItem(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = bookmark.id
+            item.image = NSImage(systemSymbolName: "bookmark.fill", accessibilityDescription: nil)
+            var tooltip = bookmark.locationDescription
+            if let ref = bookmark.ref { tooltip += " @ \(ref)" }
+            if let path = bookmark.path { tooltip += " → \(path)" }
+            item.toolTip = tooltip
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func showBookmarkManager(_ sender: Any?) {
+        BookmarksWindowController.shared.show()
+    }
+
+    @objc private func openBookmarkItem(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let bookmark = BookmarkStore.shared.bookmark(id: id)
+        else { return }
+        let controller = (NSApp.keyWindow?.windowController as? MainWindowController)
+            ?? {
+                let created = makeWindowController()
+                created.showWindow(nil)
+                return created
+            }()
+        controller.open(bookmark: bookmark)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -163,6 +211,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         goMenu.addItem(withTitle: "File History…", action: #selector(MainWindowController.showHistoryForCurrentFile(_:)), keyEquivalent: "y")
         goMenuItem.submenu = goMenu
         mainMenu.addItem(goMenuItem)
+
+        let bookmarksMenuItem = NSMenuItem()
+        let bookmarksMenu = NSMenu(title: "Bookmarks")
+        bookmarksMenu.delegate = self
+        bookmarksMenuItem.submenu = bookmarksMenu
+        mainMenu.addItem(bookmarksMenuItem)
 
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")

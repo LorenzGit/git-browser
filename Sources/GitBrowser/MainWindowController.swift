@@ -734,6 +734,121 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
         }
     }
 
+    // MARK: - Bookmarks
+
+    /// ⌘D: bookmark whatever is open — repo/folder, current ref, current file.
+    @objc func addBookmark(_ sender: Any?) {
+        guard let window, let session else {
+            NSSound.beep()
+            return
+        }
+        let location: Bookmark.Location
+        let ref: String?
+        let baseName: String
+        if let localRoot = localRootURL {
+            location = .local(path: localRoot.path)
+            ref = localRef
+            baseName = localRoot.lastPathComponent
+        } else {
+            location = .remote(session.coordinates)
+            // PR sessions are transient; bookmark the repo itself.
+            ref = currentPR == nil ? session.requestedRef : nil
+            baseName = session.coordinates.displayName
+        }
+        let path = lastViewedPath
+        let defaultName = path.map { "\(baseName) — \(RepoPath.fileName(of: $0))" } ?? baseName
+
+        let alert = NSAlert()
+        alert.messageText = "Add Bookmark"
+        var details = [locationLabel(location)]
+        if let ref { details.append("branch: \(ref)") }
+        if let path { details.append("file: \(path)") }
+        alert.informativeText = details.joined(separator: "\n")
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = defaultName
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            BookmarkStore.shared.add(Bookmark(
+                name: trimmed.isEmpty ? defaultName : trimmed,
+                location: location, ref: ref, path: path
+            ))
+        }
+    }
+
+    private func locationLabel(_ location: Bookmark.Location) -> String {
+        switch location {
+        case .remote(let coords): return "\(coords.host)/\(coords.owner)/\(coords.repo)"
+        case .local(let path): return path
+        }
+    }
+
+    /// Opens a bookmark, falling back to the default branch (or working tree
+    /// for local folders) when its branch or file no longer exists.
+    func open(bookmark: Bookmark) {
+        Task { await openBookmarkResolved(bookmark) }
+    }
+
+    private func openBookmarkResolved(_ bookmark: Bookmark) async {
+        do {
+            switch bookmark.location {
+            case .local(let folderPath):
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: folderPath, isDirectory: &isDirectory),
+                      isDirectory.boolValue
+                else {
+                    presentError(title: "Bookmark unavailable",
+                                 message: "The folder \(folderPath) no longer exists.")
+                    return
+                }
+                let rootURL = URL(fileURLWithPath: folderPath)
+                let localClient = LocalFolderClient(rootURL: rootURL)
+                let resolution = await BookmarkResolver.resolve(
+                    bookmark: bookmark, client: localClient,
+                    coordinates: LocalFolderClient.coordinates(for: rootURL)
+                )
+                await openLocal(rootURL: rootURL, ref: resolution.ref, initialPath: resolution.path)
+                reportBookmarkFallback(bookmark, resolution, fallbackName: "the working tree")
+
+            case .remote(let coordinates):
+                if ghClient == nil {
+                    ghClient = try GHCLIClient()
+                }
+                guard let client = ghClient else { return }
+                let resolution = await BookmarkResolver.resolve(
+                    bookmark: bookmark, client: client, coordinates: coordinates
+                )
+                var display = "https://\(coordinates.host)/\(coordinates.owner)/\(coordinates.repo)"
+                if let ref = resolution.ref { display += "/tree/\(ref)" }
+                urlField.stringValue = display
+                await openRepo(ParsedRepoURL(
+                    coordinates: coordinates, ref: resolution.ref, initialPath: resolution.path
+                ))
+                reportBookmarkFallback(bookmark, resolution, fallbackName: "the default branch")
+            }
+        } catch {
+            presentError(title: "Could not open bookmark", message: error.localizedDescription)
+        }
+    }
+
+    private func reportBookmarkFallback(
+        _ bookmark: Bookmark, _ resolution: BookmarkResolution, fallbackName: String
+    ) {
+        var notes: [String] = []
+        if resolution.branchFellBack, let branch = bookmark.ref {
+            notes.append("The bookmarked branch “\(branch)” is gone or no longer has the file, so \(fallbackName) was opened instead.")
+        }
+        if resolution.fileMissing, let path = bookmark.path {
+            notes.append("The bookmarked file “\(path)” no longer exists, so the repository was opened at its root.")
+        }
+        guard !notes.isEmpty else { return }
+        presentError(title: "Bookmark adjusted", message: notes.joined(separator: "\n\n"))
+    }
+
     // MARK: - Find in page
 
     @objc func showFind(_ sender: Any?) {
