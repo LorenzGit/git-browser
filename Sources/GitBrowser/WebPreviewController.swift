@@ -32,6 +32,7 @@ final class WebPreviewController: NSViewController, WKNavigationDelegate, WKUIDe
         super.init(nibName: nil, bundle: nil)
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(schemeHandler, forURLScheme: RepoSchemeHandler.scheme)
+        WebPreviewStyle.install(in: configuration)
         // Ephemeral store: nothing (cookies, storage) persists to disk.
         configuration.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: .zero, configuration: configuration)

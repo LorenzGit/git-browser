@@ -888,6 +888,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
     func openPreview(path: String, kind: PreviewKind) {
         guard let session else { return }
         lastViewedPath = path
+        updateURLField(forPath: path)
         preview.show(path: path, kind: kind, session: session)
         switch kind {
         case .image, .pdf, .media:
@@ -909,7 +910,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSToolb
               !path.isEmpty
         else { return }
         lastViewedPath = path
+        updateURLField(forPath: path)
         Task { await sidebar.reveal(path: path) }
+    }
+
+    /// Shows the canonical location of the file currently in the preview.
+    /// Remote sessions use a GitHub blob URL; local sessions use the full
+    /// filesystem path so the toolbar remains useful as a location field.
+    private func updateURLField(forPath path: String) {
+        if let localRoot = localRootURL {
+            urlField.stringValue = localRoot.appendingPathComponent(path).path
+        } else if let url = githubWebURL(path: path, isDirectory: false) {
+            urlField.stringValue = url
+        }
     }
 
     private func presentError(title: String, message: String) {

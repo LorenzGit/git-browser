@@ -17,6 +17,7 @@ final class WebHarness: NSObject, WKNavigationDelegate {
         handler = RepoSchemeHandler(registry: registry)
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(handler, forURLScheme: RepoSchemeHandler.scheme)
+        WebPreviewStyle.install(in: configuration)
         configuration.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         super.init()
@@ -252,6 +253,114 @@ final class WebIntegrationTests: XCTestCase {
         XCTAssertEqual(title, "img-ok", "repository image should decode in the page")
         await harness.settle()
         XCTAssertTrue(mock.fetchedSet.contains("fonts/f.woff2"), "font request should reach the handler")
+    }
+
+    func testWideImagesAreContainedByThePage() async throws {
+        let harness = WebHarness()
+        let (mock, session) = try await makeSession([
+            "index.html": .small("""
+            <!DOCTYPE html><html><body>
+            <div id="container" style="width: 240px">
+              <img id="wide" src="img/wide.svg" style="width: 2000px">
+            </div>
+            </body></html>
+            """),
+            "img/wide.svg": .small("""
+            <svg xmlns="http://www.w3.org/2000/svg" width="2000" height="100"></svg>
+            """),
+        ], harness: harness)
+
+        await harness.load(harness.url(session: session, "index.html"))
+        await harness.settle()
+
+        let metrics = await harness.evalJS("""
+        (() => {
+          const image = document.getElementById('wide');
+          const container = document.getElementById('container');
+          return {
+            complete: image.complete,
+            naturalWidth: image.naturalWidth,
+            requestedWidth: image.style.width,
+            imageWidth: image.getBoundingClientRect().width,
+            containerWidth: container.getBoundingClientRect().width,
+            maxWidth: getComputedStyle(image).maxWidth,
+            styleInstalled: document.getElementById('git-browser-contained-visuals') !== null
+          };
+        })()
+        """)
+        let values = metrics as? [String: Any]
+        XCTAssertEqual(values?["complete"] as? Bool, true)
+        XCTAssertGreaterThan(values?["naturalWidth"] as? Double ?? 0, 0)
+        XCTAssertEqual(values?["requestedWidth"] as? String, "2000px")
+        XCTAssertNotEqual(values?["maxWidth"] as? String, "none")
+        XCTAssertEqual(values?["styleInstalled"] as? Bool, true)
+        let imageWidth = values?["imageWidth"] as? Double ?? .infinity
+        let containerWidth = values?["containerWidth"] as? Double ?? 0
+        XCTAssertLessThanOrEqual(imageWidth, containerWidth, "wide images should not overflow their container")
+        XCTAssertTrue(mock.fetchedSet.contains("img/wide.svg"))
+    }
+
+    func testWideCanvasFramesAreScaledToTheViewport() async throws {
+        let harness = WebHarness()
+        let (_, session) = try await makeSession([
+            "design.html": .small("""
+            <!DOCTYPE html><html><head>
+            <style>
+            body { margin: 0; }
+            x-dc { display: none !important; }
+            .dv-turn { padding: 44px 48px; }
+            .dv-opts { display: flex; flex-wrap: wrap; gap: 32px; }
+            .dv-opt { flex: none; display: flex; flex-direction: column; }
+            .dv-card { max-width: 100%; overflow: hidden; }
+            </style></head><body>
+            <x-dc><meta name="design_doc_mode" content="canvas"></x-dc>
+            <template id="rendered-canvas">
+              <section class="dv-turn"><div class="dv-opts"><div class="dv-opt">
+                <div id="frame" class="dv-card" style="width:1920px;height:1080px;position:relative">
+                  <span id="right-edge" style="position:absolute;right:0;top:0;width:10px;height:10px"></span>
+                </div>
+              </div></div></section>
+            </template>
+            <script>
+            setTimeout(() => {
+              const root = document.createElement('div');
+              root.id = 'dc-root';
+              root.append(document.getElementById('rendered-canvas').content.cloneNode(true));
+              document.documentElement.setAttribute('data-dc-canvas', '');
+              document.querySelector('x-dc').replaceWith(root);
+            }, 350);
+            </script>
+            </body></html>
+            """),
+        ], harness: harness)
+
+        await harness.load(harness.url(session: session, "design.html"))
+        await harness.settle(seconds: 0.8)
+
+        let metrics = await harness.evalJS("""
+        (() => {
+          const frame = document.getElementById('frame').getBoundingClientRect();
+          const edge = document.getElementById('right-edge').getBoundingClientRect();
+          return {
+            frameRight: frame.right,
+            frameWidth: frame.width,
+            edgeRight: edge.right,
+            viewportWidth: document.documentElement.clientWidth,
+            documentWidth: document.documentElement.scrollWidth,
+            zoom: parseFloat(getComputedStyle(document.getElementById('frame')).zoom)
+          };
+        })()
+        """) as? [String: Any]
+
+        let frameRight = metrics?["frameRight"] as? Double ?? .infinity
+        let edgeRight = metrics?["edgeRight"] as? Double ?? .infinity
+        let viewportWidth = metrics?["viewportWidth"] as? Double ?? 0
+        let documentWidth = metrics?["documentWidth"] as? Double ?? .infinity
+        let zoom = metrics?["zoom"] as? Double ?? 1
+        XCTAssertLessThan(zoom, 1, "a 1920px canvas should be scaled down")
+        XCTAssertLessThanOrEqual(frameRight, viewportWidth + 0.5)
+        XCTAssertLessThanOrEqual(edgeRight, frameRight + 0.5, "the canvas should scale, not crop")
+        XCTAssertLessThanOrEqual(documentWidth, viewportWidth, "fitted canvases should not scroll horizontally")
     }
 
     func testRootRelativePathResolvesToRepoRoot() async throws {

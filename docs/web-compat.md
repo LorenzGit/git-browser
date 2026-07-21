@@ -12,7 +12,7 @@ fallback. Findings below come from the integration tests in
 | --- | --- | --- |
 | Inline CSS / JS | `testInlineAndExternalCSSAndJS` | |
 | Repository-relative CSS / JS | `testInlineAndExternalCSSAndJS` | Correct `text/css` / `text/javascript` MIME types are required and served |
-| Images | `testImagesAndFonts` | Decoded and rendered in-page |
+| Images and design canvases | `testImagesAndFonts`, `testWideImagesAreContainedByThePage`, `testWideCanvasFramesAreScaledToTheViewport` | Images are width-capped; fixed-width canvas-mode design frames are proportionally fitted to the preview |
 | Fonts (`@font-face`) | `testImagesAndFonts` | Font file requests reach the scheme handler |
 | ES modules (`<script type="module">`, nested `import`) | `testESModules` | `.mjs`/`.js` served as `text/javascript` |
 | `fetch()` | `testFetchAPI` | Same-origin fetch to the session origin works; responses carry `Access-Control-Allow-Origin: *` |

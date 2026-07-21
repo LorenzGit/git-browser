@@ -49,6 +49,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private let outlineView = NSOutlineView()
     private let scrollView = NSScrollView()
+    private let versionLabel = NSTextField(labelWithString: "")
     private let modeSwitcher = NSSegmentedControl(
         labels: ["Files", "PR Changes"], trackingMode: .selectOne, target: nil, action: nil
     )
@@ -80,16 +81,30 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         modeSwitcher.selectedSegment = 0
         modeSwitcher.isHidden = true
         modeSwitcher.translatesAutoresizingMaskIntoConstraints = false
+        configureVersionLabel()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         // Stack view detaches hidden views, so the switcher takes no space
         // until a PR session makes it visible.
-        let stack = NSStackView(views: [modeSwitcher, scrollView])
+        let stack = NSStackView(views: [modeSwitcher, scrollView, versionLabel])
         stack.orientation = .vertical
         stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 6, left: 0, bottom: 0, right: 0)
+        stack.edgeInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         stack.frame = NSRect(x: 0, y: 0, width: 260, height: 600)
         view = stack
+    }
+
+    private func configureVersionLabel() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let buildStamp = Bundle.main.object(forInfoDictionaryKey: "GitBrowserBuildStamp") as? String
+        var parts = [version.map { "v\($0)" } ?? "development"]
+        if let buildStamp, !buildStamp.isEmpty { parts.append(buildStamp) }
+        versionLabel.stringValue = parts.joined(separator: " · ")
+        versionLabel.toolTip = "GitBrowser " + parts.joined(separator: " — ")
+        versionLabel.alignment = .center
+        versionLabel.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
+        versionLabel.textColor = .tertiaryLabelColor
+        versionLabel.setContentHuggingPriority(.required, for: .vertical)
     }
 
     func configure(sessionID: String, isLocal: Bool) {

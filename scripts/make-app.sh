@@ -4,7 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-0.4.0}"
+VERSION="${1:-0.4.1}"
+BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%MZ)"
 
 if [ -d "/Applications/Xcode.app" ] && [ "$(xcode-select -p)" = "/Library/Developer/CommandLineTools" ]; then
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -42,6 +43,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key>           <string>${VERSION}</string>
+    <key>GitBrowserBuildStamp</key>       <string>${BUILD_STAMP}</string>
     <key>CFBundleIconFile</key>          <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>    <string>14.0</string>
     <key>LSApplicationCategoryType</key> <string>public.app-category.developer-tools</string>
